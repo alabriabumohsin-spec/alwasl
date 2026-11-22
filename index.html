@@ -1,4 +1,4 @@
-<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><base target="_self"></head><body>
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="preconnect" href="https://script.google.com"><link rel="preconnect" href="https://script.googleusercontent.com" crossorigin><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><base target="_self"></head><body>
 <title>استراحة بستان الوصل</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -273,6 +273,18 @@ html[lang="en"] .rv blockquote::before{content:'\201C'}
 footer{border-top:1px solid var(--line);padding-block:22px;color:var(--muted);font-size:14px}
 footer .wrap{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* loading state of the calendar (while booked days load from Google) */
+.days-wrap{position:relative}
+.cal.loading #days{pointer-events:none;opacity:.35;filter:grayscale(.4)}
+.cal-load{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:16px}
+.cal-load[hidden]{display:none}
+.cal-load #calLoadTxt{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:8px 18px;font-family:var(--display);font-size:15px;font-weight:600;color:var(--fg);box-shadow:0 6px 18px rgba(0,0,0,.08)}
+.spin{width:38px;height:38px;border-radius:50%;border:4px solid var(--line);border-top-color:var(--accent);animation:cal-spin .8s linear infinite}
+.cal-load.is-fail .spin{display:none}
+.cal-retry{min-height:42px;padding:0 20px;border-radius:999px;border:0;background:var(--gold);color:#173B2D;font-family:var(--display);font-size:15px;font-weight:600;cursor:pointer}
+@keyframes cal-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:2.4s}}
 </style>
 
 <header class="top">
@@ -420,7 +432,7 @@ footer .wrap{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}
         <div class="grid7" aria-hidden="true">
           <div class="dow">أحد</div><div class="dow">إثنين</div><div class="dow">ثلاثاء</div><div class="dow">أربعاء</div><div class="dow">خميس</div><div class="dow">جمعة</div><div class="dow">سبت</div>
         </div>
-        <div class="grid7" id="days"></div>
+        <div class="days-wrap"><div class="grid7" id="days"></div><div class="cal-load" id="calLoad" role="status" aria-live="polite" hidden><span class="spin" aria-hidden="true"></span><span id="calLoadTxt"></span><button type="button" class="cal-retry" id="calRetry" hidden></button></div></div>
         <div class="legend">
           <span><i class="sw" style="background:var(--free);border:1.5px solid var(--free-line)"></i>متاح</span>
           <span><i class="sw" style="background:var(--taken)"></i>محجوز</span>
@@ -665,7 +677,17 @@ footer .wrap{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}
 (function(){
   var EXEC = 'https://script.google.com/macros/s/AKfycbyOtXZi8C0dK-JLjJKYCbLufEucggBemQJWz3PEo0XFt63hId7POys1V15PHMOmUpmHcA/exec';
   var q = location.search.replace(/^\?/, '').replace(/[^\w=&%.-]/g, '');
-  document.write('<script src="' + EXEC + '?js=1' + (q ? '&' + q : '') + '&t=' + Date.now() + '"><\/script>');
+  var GSRC = EXEC + '?js=1' + (q ? '&' + q : '') + '&t=' + Date.now();
+  if (q) {
+    document.write('<script src="' + GSRC + '"><\/script>');
+  } else {
+    // الزبون العادي: الصفحة والتقويم يطلعون على طول، والأيام المحجوزة تتحمل في الخلفية
+    window.GAS_PENDING = true;
+    var gs = document.createElement('script'); gs.src = GSRC; gs.async = true;
+    gs.onload = function(){ window.GAS_PENDING = false; document.dispatchEvent(new Event(window.GAS ? 'gas-ready' : 'gas-fail')); };
+    gs.onerror = function(){ window.GAS_PENDING = false; document.dispatchEvent(new Event('gas-fail')); };
+    document.head.appendChild(gs);
+  }
   function mk(ok, fail){
     var r = {
       withSuccessHandler: function(f){ return mk(f, fail); },
@@ -1418,6 +1440,34 @@ document.documentElement.setAttribute('lang','ar');
         openLedgerUI();
       }
     } catch(e) {}
+  })();
+  // ---- تحميل الأيام المحجوزة في الخلفية (الزبون العادي) ----
+  (function(){
+    var CK = 'alwasl-booked';
+    function saveCache(){ try { localStorage.setItem(CK, JSON.stringify({t: Date.now(), b: BOOKED})); } catch(e){} }
+    function setLoad(state){
+      var cal = document.querySelector('.cal'), box = $('calLoad'), txt = $('calLoadTxt'), rb = $('calRetry');
+      if (!cal || !box) return;
+      if (state === 'done'){ cal.classList.remove('loading'); box.hidden = true; return; }
+      cal.classList.add('loading'); box.hidden = false;
+      box.classList.toggle('is-fail', state === 'fail');
+      txt.textContent = state === 'fail' ? tr('تعذّر تحميل الأيام المتاحة', 'Could not load the available days') : tr('جاري تحميل الأيام المتاحة…', 'Loading available days…');
+      rb.hidden = state !== 'fail'; rb.textContent = tr('إعادة المحاولة', 'Try again');
+    }
+    if (window.GAS){ saveCache(); return; }
+    if (!window.GAS_PENDING) return;
+    try { var c = JSON.parse(localStorage.getItem(CK) || 'null'); if (c && c.b && Date.now() - c.t < 14*864e5){ BOOKED = c.b; renderCal(); } } catch(e){}
+    var state = 'load'; setLoad(state);
+    var slow = setTimeout(function(){ if (state === 'load'){ state = 'fail'; setLoad(state); } }, 25000);
+    document.addEventListener('gas-ready', function(){
+      clearTimeout(slow); state = 'done';
+      BOOKED = GAS.booked || []; INFO = GAS.info || {};
+      if (sel && BOOKED.indexOf(key(sel)) !== -1) sel = null;
+      saveCache(); setLoad('done'); renderCal(); update();
+    });
+    document.addEventListener('gas-fail', function(){ clearTimeout(slow); state = 'fail'; setLoad(state); });
+    $('calRetry').addEventListener('click', function(){ location.reload(); });
+    $('langBtn').addEventListener('click', function(){ if (state !== 'done') setLoad(state); });
   })();
 })();
 </script>
